@@ -15,13 +15,81 @@ from torch.utils.data import DataLoader
 
 from dataset import TextDataset
 from lstm import TextGenerationModel
+from nltk.corpus import BracketParseCorpusReader
+from collections import Counter
+import torch.utils.data as data
+import numpy as np
 
 ################################################################################
+class TextData(data.Dataset):
+    def __init__(self, sentences, word2idx, idx2word, vocab_size):
+        self.sentences = sentences
+        self.word2idx = word2idx
+        self._vocab_size = vocab_size
+        self._data_size = len(sentences)
+        self.idx2word = idx2word
+
+    def __getitem__(self, item):
+        offset = np.random.randint(0, len(self.sentences))
+        sentence = self.sentences[offset]
+        sentence_length = len(sentence)
+        print(sentence_length)
+        #print(self.sentences[offset])
+        inputs = []
+        # for word in self.sentences[offset]:
+        #     print(len(word))
+        #     word.rstrip("\n")
+        #     inputs.append(self.word2idx[word])
+        inputs = [self.word2idx[sentence[i]] for i in range(0, sentence_length-1)]
+        targets = [self.word2idx[sentence[i]] for i in range(1, sentence_length)]
+
+        return inputs, targets
+
+    def __len__(self):
+        return self._data_size
+
+    def convert_to_string(self, word_ix):
+        return ' '.join(self.idx2word[ix] for ix in word_ix)
+
+    @property
+    def vocab_size(self):
+        return self._vocab_size
+
+
+def retrieve_data():
+    train_data = BracketParseCorpusReader("data", "02-21.10way.clean")
+    val_data = BracketParseCorpusReader("data", "22.auto.clean")
+    test_data = BracketParseCorpusReader("data", "23.auto.clean")
+
+    train_words = [x.lower() for x in train_data.words()]
+    val_words = [x.lower() for x in val_data.words()]
+    test_words = [x.lower() for x in test_data.words()]
+
+    all_words = train_words + val_words + test_words
+
+    word_counter = Counter(all_words)
+
+    vocab = ['PAD', 'SOS', 'EOS'] + list(word_counter.keys())
+    vocab_size = len(vocab)
+
+    word2idx = {ch: i for i, ch in enumerate(vocab)}
+    idx2word = {i: ch for i, ch in enumerate(vocab)}
+
+    train_sents = [[w.lower() for w in sent] for sent in train_data.sents()]
+    val_sents = [[w.lower() for w in sent] for sent in val_data.sents()]
+    test_sents = [[w.lower() for w in sent] for sent in test_data.sents()]
+
+    train_dataset = TextData(train_sents, word2idx, idx2word, vocab_size)
+    val_dataset = TextData(val_sents, word2idx, idx2word, vocab_size)
+    test_dataset = TextData(test_sents, word2idx, idx2word, vocab_size)
+
+    return train_dataset, val_dataset, test_dataset
 
 
 def seq_sampling(model, dataset, seq_length, temp=None, device='cpu'):
     # Only start with a lowercase character:
-    pivot = torch.Tensor([[dataset._char_to_ix[chr(97 + random.randint(0, 25))]]]).long().to(device)
+    dataset.vocab_size
+    pivot = torch.Tensor([[random.randint(0, dataset.vocab_size)]]).long().to(device)
     #pivot = torch.randint(dataset.vocab_size, (1, 1), device=device)
     ramblings = [pivot[0, 0].item()]
 
@@ -38,13 +106,12 @@ def seq_sampling(model, dataset, seq_length, temp=None, device='cpu'):
 
 
 def train(config):
-
     # Initialize the device which to run the model on
     device = torch.device(config.device)
 
     # Initialize the model that we are going to use
+    dataset, val, test = retrieve_data()
 
-    dataset = TextDataset(config.txt_file, config.seq_length)
     torch.save(dataset, config.txt_file + '.dataset')
 
     model = TextGenerationModel(dataset.vocab_size, config.lstm_num_hidden, config.lstm_num_layers, config.device,
@@ -98,7 +165,7 @@ def train(config):
         if step % config.sample_every == 0:
             torch.save(model, config.txt_file + '.model')
             with torch.no_grad(), open(config.txt_file + '.generated', 'a') as fp:
-                for length, temp in product([20, 30, 50, 120], [0, 0.5, 1.0, 2.0]):
+                for length, temp in product([20], [0, 0.5]):
                     text = seq_sampling(model, dataset, length, temp, device)
                     # print(text)
                     file = open("generated.txt", "a")
@@ -120,12 +187,12 @@ if __name__ == "__main__":
 
     # Model params
     parser.add_argument('--txt_file', type=str, required=False, default='southpark.txt', help="Path to a .txt file to train on")
-    parser.add_argument('--seq_length', type=int, default=40, help='Length of an input sequence')
+    parser.add_argument('--seq_length', type=int, default=15, help='Length of an input sequence')
     parser.add_argument('--lstm_num_hidden', type=int, default=128, help='Number of hidden units in the LSTM')
     parser.add_argument('--lstm_num_layers', type=int, default=3, help='Number of LSTM layers in the model')
 
     # Training params
-    parser.add_argument('--batch_size', type=int, default=64, help='Number of examples to process in a batch')
+    parser.add_argument('--batch_size', type=int, default=1, help='Number of examples to process in a batch')
     parser.add_argument('--learning_rate', type=float, default=2e-3, help='Learning rate')
 
     # It is not necessary to implement the following three params, but it may help training.
