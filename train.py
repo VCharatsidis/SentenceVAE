@@ -33,13 +33,7 @@ class TextData(data.Dataset):
         offset = np.random.randint(0, len(self.sentences))
         sentence = self.sentences[offset]
         sentence_length = len(sentence)
-        print(sentence_length)
-        #print(self.sentences[offset])
-        inputs = []
-        # for word in self.sentences[offset]:
-        #     print(len(word))
-        #     word.rstrip("\n")
-        #     inputs.append(self.word2idx[word])
+
         inputs = [self.word2idx[sentence[i]] for i in range(0, sentence_length-1)]
         targets = [self.word2idx[sentence[i]] for i in range(1, sentence_length)]
 
@@ -104,7 +98,7 @@ def seq_sampling(model, dataset, seq_length, temp=None, device='cpu'):
         ramblings.append(pivot[0, 0].item())
     return dataset.convert_to_string(ramblings)
 
-
+counter= 0
 def train(config):
     # Initialize the device which to run the model on
     device = torch.device(config.device)
@@ -113,6 +107,8 @@ def train(config):
     dataset, val, test = retrieve_data()
 
     torch.save(dataset, config.txt_file + '.dataset')
+
+    #dataset = TextDataset(config.txt_file, config.seq_length)
 
     model = TextGenerationModel(dataset.vocab_size, config.lstm_num_hidden, config.lstm_num_layers, config.device,
                                 1. - config.dropout_keep_prob)
@@ -127,52 +123,59 @@ def train(config):
     accuracies = [0, 1]
     losses = [0, 1]
 
-    for step in range(int(config.train_steps)):
-        if step % len(data_loader) == 0:
-            data_iter = iter(data_loader)
-        batch_inputs, batch_targets = next(data_iter)
+    for epochs in range(25):
+        for step, (batch_inputs, batch_targets) in enumerate(data_loader):
 
-        # Only for time measurement of step through network
-        t1 = time.time()
+            # Only for time measurement of step through network
+            t1 = time.time()
 
-        device_inputs = torch.stack(batch_inputs, dim=0).to(device)
-        device_targets = torch.stack(batch_targets, dim=1).to(device)
+            # print("batch_inputs")
+            # print(len(batch_inputs))
+            # print(batch_inputs)
+            # print("batch_targets")
+            # print(len(batch_targets))
+            # print(batch_targets)
 
-        out, _ = model.forward(device_inputs)
-        outt = out.transpose(0, 1).transpose(1, 2)
-        optimizer.zero_grad()
-        loss = criterion.forward(outt, device_targets)
-        losses.append(loss.item())
-        accuracy = (outt.argmax(dim=1) == device_targets).float().mean()
-        accuracies.append(accuracy)
+            if not batch_inputs:
+                continue
+            device_inputs = torch.stack(batch_inputs, dim=0).to(device)
+            device_targets = torch.stack(batch_targets, dim=1).to(device)
 
-        loss.backward()
-        optimizer.step()
-        lr_scheduler.step()
+            out, _ = model.forward(device_inputs)
+            outt = out.transpose(0, 1).transpose(1, 2)
+            optimizer.zero_grad()
+            loss = criterion.forward(outt, device_targets)
+            losses.append(loss.item())
+            accuracy = (outt.argmax(dim=1) == device_targets).float().mean()
+            accuracies.append(accuracy)
 
-        # Just for time measurement
-        t2 = time.time()
-        examples_per_second = config.batch_size/float(t2-t1)
+            loss.backward()
+            optimizer.step()
+            lr_scheduler.step()
 
-        if step % config.print_every == 0:
-            print("[{}] Train Step {:04d}/{:04d}, Batch Size = {}, Examples/Sec = {:.2f}, "
-                  "Accuracy = {:.2f}, Loss = {:.3f}, LR = {}".format(
-                    datetime.now().strftime("%Y-%m-%d %H:%M"), step,
-                    int(config.train_steps), config.batch_size, examples_per_second,
-                    accuracies[-1], losses[-1], optimizer.param_groups[-1]['lr']
-            ))
+            # Just for time measurement
+            t2 = time.time()
+            examples_per_second = config.batch_size/float(t2-t1)
 
-        if step % config.sample_every == 0:
-            torch.save(model, config.txt_file + '.model')
-            with torch.no_grad(), open(config.txt_file + '.generated', 'a') as fp:
-                for length, temp in product([20], [0, 0.5]):
-                    text = seq_sampling(model, dataset, length, temp, device)
-                    # print(text)
-                    file = open("generated.txt", "a")
-                    file.write(text)
-                    file.write("")
-                    file.close()
-                    fp.write("{};{};{};{}\n".format(step, length, temp, text))
+            if step % config.print_every == 0:
+                print("[{}] Train Step {:04d}/{:04d}, Batch Size = {}, Examples/Sec = {:.2f}, "
+                      "Accuracy = {:.2f}, Loss = {:.3f}, LR = {}".format(
+                        datetime.now().strftime("%Y-%m-%d %H:%M"), step,
+                        int(config.train_steps), config.batch_size, examples_per_second,
+                        accuracies[-1], losses[-1], optimizer.param_groups[-1]['lr']
+                ))
+
+            if step % config.sample_every == 0:
+                torch.save(model, config.txt_file + '.model')
+                with torch.no_grad(), open(config.txt_file + '.generated', 'a') as fp:
+                    for length, temp in product([20], [0, 0.5]):
+                        text = seq_sampling(model, dataset, length, temp, device)
+                        # print(text)
+                        file = open("generated.txt", "a")
+                        file.write(text)
+                        file.write("")
+                        file.close()
+                        fp.write("epoch: {} ; Accuracy: {} ; {} ; temp: {} ; {}\n".format(epochs, accuracy, temp,  text))
 
     print('Done training.')
 
@@ -192,7 +195,7 @@ if __name__ == "__main__":
     parser.add_argument('--lstm_num_layers', type=int, default=3, help='Number of LSTM layers in the model')
 
     # Training params
-    parser.add_argument('--batch_size', type=int, default=1, help='Number of examples to process in a batch')
+    parser.add_argument('--batch_size', type=int, default=16, help='Number of examples to process in a batch')
     parser.add_argument('--learning_rate', type=float, default=2e-3, help='Learning rate')
 
     # It is not necessary to implement the following three params, but it may help training.
